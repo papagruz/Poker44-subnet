@@ -1,15 +1,18 @@
-"""Reference Poker44 miner with simple chunk-level behavioral heuristics."""
+"""Poker44 miner with trained local model and heuristic fallback."""
 
 # from __future__ import annotations
 
 import time
 from collections import Counter
+import hashlib
+import os
 from pathlib import Path
 from typing import Tuple
 
 import bittensor as bt
 
 from poker44.base.miner import BaseMinerNeuron
+from poker44.model.inference import DEFAULT_ARTIFACT_PATH, TrainedChunkModel
 from poker44.utils.model_manifest import (
     build_local_model_manifest,
     evaluate_manifest_compliance,
@@ -20,35 +23,62 @@ from poker44.validator.synapse import DetectionSynapse
 
 class Miner(BaseMinerNeuron):
     """
-    Reference heuristic miner.
+    Local chunk-level bot detector.
 
-    It aggregates simple behavior signals over each chunk and returns a bot-risk
-    score per chunk. The goal is not SOTA accuracy, but a deterministic and
-    explainable baseline that is meaningfully better than random.
+    It uses a trained public-benchmark model when an artifact is available and
+    falls back to deterministic behavioral heuristics otherwise.
     """
+
+    _trained_model: TrainedChunkModel | None = None
+    _trained_model_checked = False
 
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
-        bt.logging.info("🤖 Heuristic Poker44 Miner started")
+        self.trained_model = self._get_trained_model()
+        model_loaded = self.trained_model is not None
+        if self.trained_model is not None:
+            self._warm_trained_model()
+        bt.logging.info(
+            "🤖 Poker44 Miner started "
+            f"mode={'trained-model' if model_loaded else 'heuristic-fallback'}"
+        )
         repo_root = Path(__file__).resolve().parents[1]
+        artifact_path = self._artifact_path(repo_root)
+        artifact_sha = self._sha256_file(artifact_path) if artifact_path.exists() else ""
         self.model_manifest = build_local_model_manifest(
             repo_root=repo_root,
-            implementation_files=[Path(__file__).resolve()],
+            implementation_files=[
+                Path(__file__).resolve(),
+                repo_root / "poker44" / "model" / "features.py",
+                repo_root / "poker44" / "model" / "inference.py",
+            ],
             defaults={
-                "model_name": "poker44-reference-heuristic",
+                "model_name": "poker44-public-benchmark-hgb" if model_loaded else "poker44-reference-heuristic",
                 "model_version": "1",
-                "framework": "python-heuristic",
+                "framework": "scikit-learn-hist-gradient-boosting" if model_loaded else "python-heuristic",
                 "license": "MIT",
-                "repo_url": "https://github.com/Poker44/Poker44-subnet",
-                "notes": "Reference heuristic miner shipped with the Poker44 subnet.",
+                "repo_url": "" if model_loaded else "https://github.com/Poker44/Poker44-subnet",
+                "artifact_url": str(artifact_path.relative_to(repo_root)) if model_loaded else "",
+                "artifact_sha256": artifact_sha,
+                "notes": (
+                    "Local sklearn model trained only on public Poker44 benchmark releases."
+                    if model_loaded
+                    else "Reference heuristic miner shipped with the Poker44 subnet."
+                ),
                 "open_source": True,
                 "inference_mode": "remote",
                 "training_data_statement": (
-                    "Reference heuristic miner. No training step. Uses only runtime chunk features."
+                    "Trained on public Poker44 benchmark releases only, using miner-visible "
+                    "chunk features from players, streets, actions, and outcome. No identifiers, "
+                    "hashes, source dates, labels, or validator-private fields are used as features."
+                    if model_loaded
+                    else "Reference heuristic miner. No training step. Uses only runtime chunk features."
                 ),
-                "training_data_sources": ["none"],
+                "training_data_sources": ["Poker44 public benchmark API"] if model_loaded else ["none"],
                 "private_data_attestation": (
-                    "This reference miner does not train on validator-only evaluation data."
+                    "This miner does not train on validator-only evaluation data or private labels."
+                    if model_loaded
+                    else "This reference miner does not train on validator-only evaluation data."
                 ),
             },
         )
@@ -88,15 +118,70 @@ class Miner(BaseMinerNeuron):
             f"miner_doc={repo_root / 'docs' / 'miner.md'}"
         )
 
+    def _warm_trained_model(self) -> None:
+        """Run one tiny inference to avoid first validator request paying sklearn setup cost."""
+        try:
+            assert self.trained_model is not None
+            self.trained_model.score_chunks(
+                [
+                    [
+                        {
+                            "players": [{}, {}],
+                            "streets": ["preflop"],
+                            "actions": [
+                                {"action_type": "call", "street": "preflop", "amount": 0.02},
+                                {"action_type": "check", "street": "preflop", "amount": 0.0},
+                            ],
+                            "outcome": {},
+                        }
+                    ]
+                ]
+            )
+            bt.logging.info("Trained Poker44 model warmup complete.")
+        except Exception as exc:
+            bt.logging.warning(f"Trained Poker44 model warmup failed: {exc}")
+
+    @classmethod
+    def _get_trained_model(cls) -> TrainedChunkModel | None:
+        if cls._trained_model_checked:
+            return cls._trained_model
+        cls._trained_model_checked = True
+        try:
+            cls._trained_model = TrainedChunkModel.load()
+        except Exception as exc:
+            bt.logging.warning(f"Unable to load trained Poker44 model artifact; using heuristic fallback: {exc}")
+            cls._trained_model = None
+        return cls._trained_model
+
+    @staticmethod
+    def _artifact_path(repo_root: Path) -> Path:
+        raw = os.getenv("POKER44_MODEL_ARTIFACT") or str(DEFAULT_ARTIFACT_PATH)
+        path = Path(raw)
+        return path if path.is_absolute() else repo_root / path
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     async def forward(self, synapse: DetectionSynapse) -> DetectionSynapse:
         """Assign one deterministic bot-risk score per chunk."""
         chunks = synapse.chunks or []
-        scores = [self.score_chunk(chunk) for chunk in chunks]
+        if self.trained_model is not None:
+            scores = self.trained_model.score_chunks(chunks)
+        else:
+            scores = [self.score_chunk(chunk) for chunk in chunks]
         synapse.risk_scores = scores
         synapse.predictions = [s >= 0.5 for s in scores]
         synapse.model_manifest = dict(self.model_manifest)
-        bt.logging.info(f"Miner Predctions: {synapse.predictions}")
-        bt.logging.info(f"Scored {len(chunks)} chunks with heuristic risks.")
+        bt.logging.info(f"Miner predictions: {synapse.predictions}")
+        bt.logging.info(
+            f"Scored {len(chunks)} chunks with "
+            f"{'trained model' if self.trained_model is not None else 'heuristic fallback'}."
+        )
         return synapse
 
     @staticmethod
@@ -143,6 +228,9 @@ class Miner(BaseMinerNeuron):
 
     @classmethod
     def score_chunk(cls, chunk: list[dict]) -> float:
+        trained_model = cls._get_trained_model()
+        if trained_model is not None:
+            return trained_model.score_chunk(chunk)
         if not chunk:
             return 0.5
 

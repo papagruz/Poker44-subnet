@@ -11,6 +11,26 @@ import traceback
 traceback.format_exc()
 
 
+def _set_config_value(config: "bt.Config", dotted_key: str, value) -> None:
+    """Set argparse dotted keys (for example axon.port) on a bt.Config tree.
+
+    Newer Bittensor runtimes may disable CLI parsing globally, which makes
+    ``bt.Config(parser=...)`` return defaults only. Poker44 still needs local
+    neuron args, so we parse argparse ourselves and hydrate the nested config.
+    """
+    current = config
+    parts = dotted_key.split(".")
+
+    for part in parts[:-1]:
+        section = getattr(current, part, None)
+        if section is None:
+            section = bt.Config()
+            current[part] = section
+        current = section
+
+    current[parts[-1]] = value
+
+
 def add_args(cls, parser: argparse.ArgumentParser) -> None:
     if parser is None:
         parser = argparse.ArgumentParser()
@@ -21,6 +41,12 @@ def add_args(cls, parser: argparse.ArgumentParser) -> None:
     
     parser.add_argument("--netuid", type=int, help="Subnet netuid", default=126)
     
+    parser.add_argument(
+        "--neuron.name",
+        type=str,
+        default="miner",
+        help="Neuron instance name used for logging and state directory paths.",
+    )
     parser.add_argument(
         "--neuron.device",
         type=str,
@@ -190,4 +216,10 @@ def check_config(cls, config: "bt.Config"):
 def config(cls) -> bt.Config:
     parser = argparse.ArgumentParser()
     cls.add_args(parser)
-    return bt.Config(parser=parser)
+    parsed, _unknown = parser.parse_known_args()
+
+    config = bt.Config()
+    for key, value in vars(parsed).items():
+        _set_config_value(config, key, value)
+
+    return config

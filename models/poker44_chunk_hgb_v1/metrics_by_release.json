@@ -1,0 +1,52 @@
+{
+  "by_release": {
+    "2026-07-07": {
+      "ap_score": 0.9064457293819737,
+      "average_precision": 0.9064457293819737,
+      "base_score": 0.8524411904688759,
+      "bot_recall": 0.6172839506172839,
+      "brier": 0.16569852155869613,
+      "calibration_quality": 1.0,
+      "fpr": 0.037037037037037035,
+      "hard_bot_recall": 0.4567901234567901,
+      "hard_fpr": 0.024691358024691357,
+      "human_safety_penalty": 1.0,
+      "latency_quality": 1.0,
+      "positive_prediction_rate": 0.24074074074074073,
+      "reward": 0.8524411904688759,
+      "threshold_sanity_quality": 1.0
+    },
+    "2026-07-08": {
+      "ap_score": 0.8758134726592858,
+      "average_precision": 0.8758134726592858,
+      "base_score": 0.7967944556904903,
+      "bot_recall": 0.4675324675324675,
+      "brier": 0.169307483576095,
+      "calibration_quality": 1.0,
+      "fpr": 0.03896103896103896,
+      "hard_bot_recall": 0.5064935064935064,
+      "hard_fpr": 0.07792207792207792,
+      "human_safety_penalty": 1.0,
+      "latency_quality": 1.0,
+      "positive_prediction_rate": 0.2922077922077922,
+      "reward": 0.7967944556904903,
+      "threshold_sanity_quality": 1.0
+    }
+  },
+  "holdout": {
+    "ap_score": 0.8903872265987798,
+    "average_precision": 0.8903872265987798,
+    "base_score": 0.7983443900690667,
+    "bot_recall": 0.45569620253164556,
+    "brier": 0.16745731950388418,
+    "calibration_quality": 1.0,
+    "fpr": 0.0379746835443038,
+    "hard_bot_recall": 0.4810126582278481,
+    "hard_fpr": 0.05063291139240506,
+    "human_safety_penalty": 1.0,
+    "latency_quality": 1.0,
+    "positive_prediction_rate": 0.26582278481012656,
+    "reward": 0.7983443900690667,
+    "threshold_sanity_quality": 1.0
+  }
+}

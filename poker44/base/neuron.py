@@ -89,7 +89,11 @@ class BaseNeuron(ABC):
         while True:
             try:
                 bt.logging.info("Initializing subtensor and metagraph")
-                self.subtensor = bt.Subtensor(config=self.config)
+                chain_endpoint = getattr(self.config.subtensor, "chain_endpoint", None)
+                self.subtensor = bt.Subtensor(
+                    network=chain_endpoint or getattr(self.config.subtensor, "network", None),
+                    config=self.config,
+                )
                 self.metagraph = self.subtensor.metagraph(self.config.netuid)
                 break
             except Exception as e:

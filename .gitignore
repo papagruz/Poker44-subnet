@@ -24,6 +24,12 @@ flightplans/*
 model/*
 
 models/*
+!models/poker44_chunk_hgb_v1/
+!models/poker44_chunk_hgb_v1/model.pkl
+!models/poker44_chunk_hgb_v1/feature_schema.json
+!models/poker44_chunk_hgb_v1/metrics_by_release.json
+!models/poker44_chunk_hgb_v1/train_config.json
+data/poker44_benchmark/
 runs/*
 # C extensions
 *.so
