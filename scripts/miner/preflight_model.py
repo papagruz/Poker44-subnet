@@ -99,7 +99,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
             "model_version": "1",
             "framework": "scikit-learn-hist-gradient-boosting" if model_loaded else "python-heuristic",
             "license": "MIT",
-            "repo_url": "" if model_loaded else "https://github.com/Poker44/Poker44-subnet",
+            "repo_url": "https://github.com/papagruz/Poker44-subnet" if model_loaded else "https://github.com/Poker44/Poker44-subnet",
             "artifact_url": str(artifact_path.relative_to(repo_root)) if model_loaded else "",
             "artifact_sha256": artifact_sha,
             "notes": (
