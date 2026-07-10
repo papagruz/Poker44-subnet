@@ -83,7 +83,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     if artifact_path.exists():
         digest = hashlib.sha256()
         with artifact_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            for chunk in iter(lambda: handle.read(1024 * 1024), b=""):
                 digest.update(chunk)
         artifact_sha = digest.hexdigest()
     model_loaded = artifact_path.exists()
@@ -165,6 +165,12 @@ def main() -> int:
 
     if not os.getenv("POKER44_MODEL_REPO_COMMIT"):
         try:
+            subprocess.check_call(
+                ["git", "diff", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            subprocess.check_call(
+                ["git", "diff", "--cached", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             repo_commit = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
             ).strip()

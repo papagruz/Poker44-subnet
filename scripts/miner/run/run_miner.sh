@@ -35,12 +35,14 @@ if ! command -v pm2 &> /dev/null; then
     exit 1
 fi
 
-pm2 delete $PM2_NAME 2>/dev/null || true
-
 export PYTHONPATH="$(pwd)"
 
 if [ -z "$POKER44_MODEL_REPO_COMMIT" ] && command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
-  POKER44_MODEL_REPO_COMMIT="$(git rev-parse HEAD)"
+  if git diff --quiet && git diff --cached --quiet; then
+    POKER44_MODEL_REPO_COMMIT="$(git rev-parse HEAD)"
+  else
+    echo "Warning: git working tree has uncommitted changes; leaving POKER44_MODEL_REPO_COMMIT empty to avoid a false manifest."
+  fi
 fi
 export POKER44_MODEL_REPO_COMMIT
 
@@ -73,6 +75,8 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "Config: netuid=$NETUID network=$NETWORK chain_endpoint=$SUBTENSOR_CHAIN_ENDPOINT wallet_path=$WALLET_PATH wallet=$WALLET_NAME hotkey=$HOTKEY axon_ip=$AXON_IP axon_port=$AXON_PORT external_ip=$AXON_EXTERNAL_IP external_port=$AXON_EXTERNAL_PORT python=$PYTHON_BIN model_repo_commit=$POKER44_MODEL_REPO_COMMIT"
   exit 0
 fi
+
+pm2 delete $PM2_NAME 2>/dev/null || true
 
 pm2 start "$MINER_SCRIPT" \
   --name "$PM2_NAME" \

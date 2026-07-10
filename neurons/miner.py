@@ -12,7 +12,7 @@ from typing import Tuple
 import bittensor as bt
 
 from poker44.base.miner import BaseMinerNeuron
-from poker44.model.inference import DEFAULT_ARTIFACT_PATH, TrainedChunkModel
+from poker44.model.inference import DEFAULT_ARTIFACT_PATH, TrainedChunkModel, calibrate_batch_scores
 from poker44.utils.model_manifest import (
     build_local_model_manifest,
     evaluate_manifest_compliance,
@@ -163,7 +163,7 @@ class Miner(BaseMinerNeuron):
     def _sha256_file(path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            for chunk in iter(lambda: handle.read(1024 * 1024), b=""):
                 digest.update(chunk)
         return digest.hexdigest()
 
@@ -171,18 +171,52 @@ class Miner(BaseMinerNeuron):
         """Assign one deterministic bot-risk score per chunk."""
         chunks = synapse.chunks or []
         if self.trained_model is not None:
-            scores = self.trained_model.score_chunks(chunks)
+            raw_scores = self.trained_model.score_chunks(chunks)
+            scores = calibrate_batch_scores(raw_scores)
         else:
-            scores = [self.score_chunk(chunk) for chunk in chunks]
+            raw_scores = [self.score_chunk(chunk) for chunk in chunks]
+            scores = calibrate_batch_scores(raw_scores)
         synapse.risk_scores = scores
         synapse.predictions = [s >= 0.5 for s in scores]
         synapse.model_manifest = dict(self.model_manifest)
         bt.logging.info(f"Miner predictions: {synapse.predictions}")
+        self._log_score_distribution(raw_scores=raw_scores, scores=scores)
         bt.logging.info(
             f"Scored {len(chunks)} chunks with "
             f"{'trained model' if self.trained_model is not None else 'heuristic fallback'}."
         )
         return synapse
+
+    @staticmethod
+    def _score_stats(scores: list[float]) -> dict[str, float]:
+        if not scores:
+            return {
+                "min": 0.0,
+                "mean": 0.0,
+                "max": 0.0,
+                "positive_count": 0,
+                "positive_rate": 0.0,
+            }
+        positive_count = sum(1 for score in scores if score >= 0.5)
+        return {
+            "min": min(scores),
+            "mean": sum(scores) / len(scores),
+            "max": max(scores),
+            "positive_count": positive_count,
+            "positive_rate": positive_count / len(scores),
+        }
+
+    @classmethod
+    def _log_score_distribution(cls, *, raw_scores: list[float], scores: list[float]) -> None:
+        raw = cls._score_stats(raw_scores)
+        calibrated = cls._score_stats(scores)
+        bt.logging.info(
+            "Risk score stats | "
+            f"raw_min={raw['min']:.6f} raw_mean={raw['mean']:.6f} raw_max={raw['max']:.6f} "
+            f"raw_positive={raw['positive_count']}/{len(raw_scores)} raw_positive_rate={raw['positive_rate']:.3f} | "
+            f"final_min={calibrated['min']:.6f} final_mean={calibrated['mean']:.6f} final_max={calibrated['max']:.6f} "
+            f"final_positive={calibrated['positive_count']}/{len(scores)} final_positive_rate={calibrated['positive_rate']:.3f}"
+        )
 
     @staticmethod
     def _clamp01(value: float) -> float:
