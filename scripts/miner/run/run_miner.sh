@@ -18,6 +18,8 @@ AXON_EXTERNAL_PORT="${AXON_EXTERNAL_PORT:-$AXON_PORT}"
 ALLOWED_VALIDATOR_HOTKEYS="${ALLOWED_VALIDATOR_HOTKEYS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 POKER44_MODEL_REPO_COMMIT="${POKER44_MODEL_REPO_COMMIT:-}"
+POKER44_BATCH_CALIBRATION="${POKER44_BATCH_CALIBRATION:-1}"
+POKER44_TARGET_POSITIVE_RATE="${POKER44_TARGET_POSITIVE_RATE:-0.15}"
 
 if [ ! -f "$MINER_SCRIPT" ]; then
     echo "Error: Miner script not found at $MINER_SCRIPT"
@@ -45,6 +47,8 @@ if [ -z "$POKER44_MODEL_REPO_COMMIT" ] && command -v git &> /dev/null && git rev
   fi
 fi
 export POKER44_MODEL_REPO_COMMIT
+export POKER44_BATCH_CALIBRATION
+export POKER44_TARGET_POSITIVE_RATE
 
 MINER_ARGS=(
   --netuid "$NETUID"
@@ -72,7 +76,7 @@ if [ "$DRY_RUN" = "1" ]; then
   printf 'Command: pm2 start %q --name %q --interpreter %q --' "$MINER_SCRIPT" "$PM2_NAME" "$PYTHON_BIN"
   printf ' %q' "${MINER_ARGS[@]}"
   printf '\n'
-  echo "Config: netuid=$NETUID network=$NETWORK chain_endpoint=$SUBTENSOR_CHAIN_ENDPOINT wallet_path=$WALLET_PATH wallet=$WALLET_NAME hotkey=$HOTKEY axon_ip=$AXON_IP axon_port=$AXON_PORT external_ip=$AXON_EXTERNAL_IP external_port=$AXON_EXTERNAL_PORT python=$PYTHON_BIN model_repo_commit=$POKER44_MODEL_REPO_COMMIT"
+  echo "Config: netuid=$NETUID network=$NETWORK chain_endpoint=$SUBTENSOR_CHAIN_ENDPOINT wallet_path=$WALLET_PATH wallet=$WALLET_NAME hotkey=$HOTKEY axon_ip=$AXON_IP axon_port=$AXON_PORT external_ip=$AXON_EXTERNAL_IP external_port=$AXON_EXTERNAL_PORT python=$PYTHON_BIN model_repo_commit=$POKER44_MODEL_REPO_COMMIT batch_calibration=$POKER44_BATCH_CALIBRATION target_positive_rate=$POKER44_TARGET_POSITIVE_RATE"
   exit 0
 fi
 
@@ -87,7 +91,7 @@ pm2 save
 
 echo "Miner started: $PM2_NAME"
 echo "View logs: pm2 logs $PM2_NAME"
-echo "Config: netuid=$NETUID network=$NETWORK chain_endpoint=$SUBTENSOR_CHAIN_ENDPOINT wallet_path=$WALLET_PATH wallet=$WALLET_NAME hotkey=$HOTKEY axon_ip=$AXON_IP axon_port=$AXON_PORT external_ip=$AXON_EXTERNAL_IP external_port=$AXON_EXTERNAL_PORT python=$PYTHON_BIN model_repo_commit=$POKER44_MODEL_REPO_COMMIT"
+echo "Config: netuid=$NETUID network=$NETWORK chain_endpoint=$SUBTENSOR_CHAIN_ENDPOINT wallet_path=$WALLET_PATH wallet=$WALLET_NAME hotkey=$HOTKEY axon_ip=$AXON_IP axon_port=$AXON_PORT external_ip=$AXON_EXTERNAL_IP external_port=$AXON_EXTERNAL_PORT python=$PYTHON_BIN model_repo_commit=$POKER44_MODEL_REPO_COMMIT batch_calibration=$POKER44_BATCH_CALIBRATION target_positive_rate=$POKER44_TARGET_POSITIVE_RATE"
 if [ -n "$ALLOWED_VALIDATOR_HOTKEYS" ]; then
     echo "Access mode: validator allowlist"
 else

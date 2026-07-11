@@ -2,11 +2,16 @@
   "base_url": "https://api.poker44.net/api/v1/benchmark",
   "cache_dir": "data/poker44_benchmark",
   "download_method": "curl",
-  "holdout_releases": 2,
+  "holdout_releases": 3,
+  "l2_regularization": 0.2,
+  "learning_rate": 0.035,
   "limit": 24,
+  "max_iter": 350,
+  "max_leaf_nodes": 31,
   "max_pages_per_release": 0,
   "model_dir": "models/poker44_chunk_hgb_v1",
+  "no_sanitized_augmentation": false,
   "release_limit": 30,
-  "skip_download": false,
+  "skip_download": true,
   "timeout": 600.0
 }

@@ -19,6 +19,7 @@ from sklearn.metrics import average_precision_score, brier_score_loss
 
 from poker44.model.features import FEATURE_NAMES, extract_feature_matrix
 from poker44.score.scoring import reward
+from poker44.validator.payload_view import build_miner_payload_hand
 
 
 BASE_URL = "https://api.poker44.net/api/v1/benchmark"
@@ -37,6 +38,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pages-per-release", type=int, default=0, help="0 means all pages.")
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--download-method", choices=("curl", "requests"), default="curl")
+    parser.add_argument(
+        "--no-sanitized-augmentation",
+        action="store_true",
+        help="Disable adding miner-visible sanitized copies of public benchmark chunks to training and calibration.",
+    )
+    parser.add_argument("--max-iter", type=int, default=350)
+    parser.add_argument("--learning-rate", type=float, default=0.035)
+    parser.add_argument("--max-leaf-nodes", type=int, default=31)
+    parser.add_argument("--l2-regularization", type=float, default=0.20)
     return parser.parse_args()
 
 
@@ -128,7 +138,11 @@ def download_release(args: argparse.Namespace, source_date: str, cache_dir: Path
     return target
 
 
-def load_examples(paths: list[Path]) -> tuple[np.ndarray, np.ndarray, list[str]]:
+def load_examples(
+    paths: list[Path],
+    *,
+    include_sanitized: bool = False,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     chunks: list[list[dict]] = []
     labels: list[int] = []
     release_ids: list[str] = []
@@ -143,6 +157,14 @@ def load_examples(paths: list[Path]) -> tuple[np.ndarray, np.ndarray, list[str]]
             chunks.extend(row_chunks)
             labels.extend(int(x) for x in row_labels)
             release_ids.extend([source_date] * len(row_labels))
+            if include_sanitized:
+                sanitized_chunks = [
+                    [build_miner_payload_hand(hand) for hand in chunk]
+                    for chunk in row_chunks
+                ]
+                chunks.extend(sanitized_chunks)
+                labels.extend(int(x) for x in row_labels)
+                release_ids.extend([source_date] * len(row_labels))
     return np.asarray(extract_feature_matrix(chunks), dtype=float), np.asarray(labels, dtype=int), release_ids
 
 
@@ -201,16 +223,21 @@ def main() -> int:
     calibration_paths = paths[holdout_count : holdout_count + 1]
     train_paths = paths[holdout_count + 1 :]
 
-    x_train, y_train, _ = load_examples(train_paths)
-    x_cal, y_cal, _ = load_examples(calibration_paths)
+    include_sanitized = not args.no_sanitized_augmentation
+    x_train, y_train, _ = load_examples(train_paths, include_sanitized=include_sanitized)
+    x_cal, y_cal, _ = load_examples(calibration_paths, include_sanitized=include_sanitized)
     x_holdout, y_holdout, holdout_release_ids = load_examples(holdout_paths)
+    x_holdout_sanitized, y_holdout_sanitized, holdout_release_ids_sanitized = load_examples(
+        holdout_paths,
+        include_sanitized=True,
+    )
     print({"train_examples": int(len(y_train)), "cal_examples": int(len(y_cal)), "holdout_examples": int(len(y_holdout))})
 
     base_model = HistGradientBoostingClassifier(
-        max_iter=250,
-        learning_rate=0.04,
-        max_leaf_nodes=15,
-        l2_regularization=0.05,
+        max_iter=args.max_iter,
+        learning_rate=args.learning_rate,
+        max_leaf_nodes=args.max_leaf_nodes,
+        l2_regularization=args.l2_regularization,
         random_state=44,
     )
     base_model.fit(x_train, y_train)
@@ -221,10 +248,20 @@ def main() -> int:
     holdout_scores_raw = model.predict_proba(x_holdout)[:, 1]
     holdout_scores = align_threshold_to_half(holdout_scores_raw, threshold)
     all_metrics = metrics_for(holdout_scores, y_holdout)
+    holdout_sanitized_scores_raw = model.predict_proba(x_holdout_sanitized)[:, 1]
+    holdout_sanitized_scores = align_threshold_to_half(holdout_sanitized_scores_raw, threshold)
+    all_metrics_sanitized = metrics_for(holdout_sanitized_scores, y_holdout_sanitized)
     by_release: dict[str, dict[str, float]] = {}
     for release in sorted(set(holdout_release_ids)):
         mask = np.asarray([item == release for item in holdout_release_ids], dtype=bool)
         by_release[release] = metrics_for(holdout_scores[mask], y_holdout[mask])
+    by_release_sanitized: dict[str, dict[str, float]] = {}
+    for release in sorted(set(holdout_release_ids_sanitized)):
+        mask = np.asarray([item == release for item in holdout_release_ids_sanitized], dtype=bool)
+        by_release_sanitized[release] = metrics_for(
+            holdout_sanitized_scores[mask],
+            y_holdout_sanitized[mask],
+        )
 
     artifact = {
         "model": model,
@@ -232,6 +269,14 @@ def main() -> int:
         "schema_version": "chunk-features-v1",
         "threshold": threshold,
         "score_clip": (0.001, 0.999),
+        "sanitized_augmentation": include_sanitized,
+        "model_params": {
+            "max_iter": args.max_iter,
+            "learning_rate": args.learning_rate,
+            "max_leaf_nodes": args.max_leaf_nodes,
+            "l2_regularization": args.l2_regularization,
+            "random_state": 44,
+        },
         "train_releases": [json.loads(path.read_text(encoding="utf-8"))["sourceDate"] for path in train_paths],
         "calibration_releases": [json.loads(path.read_text(encoding="utf-8"))["sourceDate"] for path in calibration_paths],
         "holdout_releases": [json.loads(path.read_text(encoding="utf-8"))["sourceDate"] for path in holdout_paths],
@@ -241,11 +286,24 @@ def main() -> int:
     with (model_dir / "model.pkl").open("wb") as handle:
         pickle.dump(artifact, handle, protocol=pickle.HIGHEST_PROTOCOL)
     (model_dir / "feature_schema.json").write_text(json.dumps({"feature_names": FEATURE_NAMES}, indent=2), encoding="utf-8")
-    (model_dir / "metrics_by_release.json").write_text(json.dumps({"holdout": all_metrics, "by_release": by_release}, indent=2, sort_keys=True), encoding="utf-8")
+    (model_dir / "metrics_by_release.json").write_text(
+        json.dumps(
+            {
+                "holdout": all_metrics,
+                "holdout_sanitized_augmented_view": all_metrics_sanitized,
+                "by_release": by_release,
+                "by_release_sanitized_augmented_view": by_release_sanitized,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     (model_dir / "train_config.json").write_text(json.dumps({k: v for k, v in vars(args).items()}, indent=2, sort_keys=True), encoding="utf-8")
     print("saved", model_dir / "model.pkl")
     print("threshold", threshold)
     print("holdout_metrics", json.dumps(all_metrics, sort_keys=True))
+    print("holdout_sanitized_augmented_view_metrics", json.dumps(all_metrics_sanitized, sort_keys=True))
     return 0
 
 

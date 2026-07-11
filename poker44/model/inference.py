@@ -75,7 +75,10 @@ def calibrate_batch_scores(
         return [round(score, 6) for score in raw]
 
     if target_positive_rate is None:
-        target_positive_rate = _env_float("POKER44_TARGET_POSITIVE_RATE", default=0.30)
+        # Live validator batches seen by UID 155 were raw-positive for every
+        # chunk. A lower default keeps the hard 0.5 threshold human-safe while
+        # preserving the model ranking used by AP / recall-at-FPR scoring.
+        target_positive_rate = _env_float("POKER44_TARGET_POSITIVE_RATE", default=0.15)
     target_positive_rate = max(0.01, min(0.50, float(target_positive_rate)))
 
     positive_count = int(round(n * target_positive_rate))

@@ -17,7 +17,7 @@ import numpy as np
 import requests
 
 from neurons.miner import Miner
-from poker44.model.inference import DEFAULT_ARTIFACT_PATH
+from poker44.model.inference import DEFAULT_ARTIFACT_PATH, calibrate_batch_scores
 from poker44.score.scoring import reward
 from poker44.utils.model_manifest import (
     build_local_model_manifest,
@@ -83,7 +83,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     if artifact_path.exists():
         digest = hashlib.sha256()
         with artifact_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b=""):
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         artifact_sha = digest.hexdigest()
     model_loaded = artifact_path.exists()
@@ -125,7 +125,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
 
 
 def score_rows(rows: list[dict[str, Any]]) -> tuple[list[float], list[int], list[float]]:
-    scores: list[float] = []
+    chunks_all: list[list[dict[str, Any]]] = []
     labels: list[int] = []
     latencies_ms: list[float] = []
     trained_model = Miner._get_trained_model()
@@ -137,24 +137,25 @@ def score_rows(rows: list[dict[str, Any]]) -> tuple[list[float], list[int], list
                 f"contract mismatch in row {row.get('chunkId', '<unknown>')}: "
                 f"chunks={len(chunks)} labels={len(ground_truth)}"
             )
-        if trained_model is not None:
+        chunks_all.extend(chunks)
+        labels.extend(int(label) for label in ground_truth)
+
+    if trained_model is not None:
+        started = time.perf_counter()
+        raw_scores = trained_model.score_chunks(chunks_all)
+        scores = calibrate_batch_scores(raw_scores)
+        per_chunk_latency = ((time.perf_counter() - started) * 1000.0) / max(len(chunks_all), 1)
+        latencies_ms.extend([per_chunk_latency] * len(scores))
+    else:
+        scores = []
+        for chunk in chunks_all:
             started = time.perf_counter()
-            row_scores = trained_model.score_chunks(chunks)
-            per_chunk_latency = ((time.perf_counter() - started) * 1000.0) / max(len(chunks), 1)
-        else:
-            row_scores = []
-            for chunk in chunks:
-                started = time.perf_counter()
-                row_scores.append(Miner.score_chunk(chunk))
-                latencies_ms.append((time.perf_counter() - started) * 1000.0)
-            per_chunk_latency = 0.0
-        for score, label in zip(row_scores, ground_truth):
-            if trained_model is not None:
-                latencies_ms.append(per_chunk_latency)
-            if not 0.0 <= score <= 1.0:
-                raise ValueError(f"score out of range: {score}")
-            scores.append(float(score))
-            labels.append(int(label))
+            scores.append(Miner.score_chunk(chunk))
+            latencies_ms.append((time.perf_counter() - started) * 1000.0)
+
+    for score in scores:
+        if not 0.0 <= score <= 1.0:
+            raise ValueError(f"score out of range: {score}")
     return scores, labels, latencies_ms
 
 

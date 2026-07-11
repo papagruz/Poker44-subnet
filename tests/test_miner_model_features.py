@@ -50,6 +50,8 @@ def test_identifier_fields_do_not_affect_features():
     second = _sample_chunk()
     second[0]["hand_id"] = "hidden-identity-b"
     second[0]["actions"][0]["action_id"] = "999"
+    second[0]["players"][0]["player_uid"] = "hidden-player-identity"
+    second[0]["metadata"]["rng_seed_commitment"] = "hidden-rng"
 
     assert extract_chunk_features(first) == extract_chunk_features(second)
 

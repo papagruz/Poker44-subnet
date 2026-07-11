@@ -114,6 +114,11 @@ class Miner(BaseMinerNeuron):
             f"inference_mode={self.model_manifest.get('inference_mode', '')}"
         )
         bt.logging.info(
+            "Live calibration config | "
+            f"enabled={os.getenv('POKER44_BATCH_CALIBRATION', '1')} "
+            f"target_positive_rate={os.getenv('POKER44_TARGET_POSITIVE_RATE', '0.15')}"
+        )
+        bt.logging.info(
             "Miner prep docs available | "
             f"miner_doc={repo_root / 'docs' / 'miner.md'}"
         )
@@ -163,13 +168,21 @@ class Miner(BaseMinerNeuron):
     def _sha256_file(path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b=""):
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
 
     async def forward(self, synapse: DetectionSynapse) -> DetectionSynapse:
         """Assign one deterministic bot-risk score per chunk."""
         chunks = synapse.chunks or []
+        caller = self._caller_context(synapse)
+        bt.logging.info(
+            "Validator request accepted | "
+            f"caller_hotkey={caller['hotkey']} caller_uid={caller['uid']} "
+            f"caller_vpermit={caller['validator_permit']} caller_stake={caller['stake']:.6f} "
+            f"chunks={len(chunks)} manifest_digest={self.manifest_digest} "
+            f"target_positive_rate={os.getenv('POKER44_TARGET_POSITIVE_RATE', '0.15')}"
+        )
         if self.trained_model is not None:
             raw_scores = self.trained_model.score_chunks(chunks)
             scores = calibrate_batch_scores(raw_scores)
@@ -185,7 +198,40 @@ class Miner(BaseMinerNeuron):
             f"Scored {len(chunks)} chunks with "
             f"{'trained model' if self.trained_model is not None else 'heuristic fallback'}."
         )
+        bt.logging.info(
+            "Miner response ready | "
+            f"caller_uid={caller['uid']} chunks={len(chunks)} "
+            f"risk_scores={len(synapse.risk_scores or [])} "
+            f"predictions_positive={sum(1 for p in (synapse.predictions or []) if p)} "
+            f"manifest_digest={self.manifest_digest}"
+        )
         return synapse
+
+    def _caller_context(self, synapse: DetectionSynapse) -> dict[str, object]:
+        """Return validator identity/stake for live debugging without blocking scoring."""
+        hotkey = ""
+        dendrite = getattr(synapse, "dendrite", None)
+        if dendrite is not None:
+            hotkey = str(getattr(dendrite, "hotkey", "") or "")
+
+        uid = -1
+        validator_permit = False
+        stake = 0.0
+        try:
+            hotkeys = list(getattr(self.metagraph, "hotkeys", []) or [])
+            if hotkey in hotkeys:
+                uid = int(hotkeys.index(hotkey))
+                validator_permit = bool(self.metagraph.validator_permit[uid])
+                stake = float(self.metagraph.S[uid])
+        except Exception as exc:
+            bt.logging.debug(f"Unable to resolve caller context for {hotkey}: {exc}")
+
+        return {
+            "hotkey": hotkey,
+            "uid": uid,
+            "validator_permit": validator_permit,
+            "stake": stake,
+        }
 
     @staticmethod
     def _score_stats(scores: list[float]) -> dict[str, float]:
